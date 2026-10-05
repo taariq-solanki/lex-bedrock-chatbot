@@ -1,0 +1,20 @@
+{
+  "sessionId": "test-session-123",
+  "inputTranscript": "Tell me about Amazon",
+  "bot": {
+    "id": "TESTBOTID",
+    "name": "staging-bedrock-chatbot-bot",
+    "localeId": "en_US",
+    "version": "DRAFT"
+  },
+  "sessionState": {
+    "intent": {
+      "name": "FallbackIntent",
+      "state": "InProgress"
+    },
+    "sessionAttributes": {
+      "ConversationContext": "{\"chat_history\": \"Human: hi\\nAI: Hello! How can I help you?\"}"
+    }
+  },
+  "requestAttributes": {}
+}

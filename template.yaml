@@ -1,0 +1,606 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Lex V2 Bedrock Chatbot - SAM template for deploying a conversational AI
+  chatbot using Amazon Lex V2 and Amazon Bedrock.
+
+Mappings:
+  StagePrefix:
+    staging:
+      Prefix: staging
+    production:
+      Prefix: prod
+
+Parameters:
+  Stage:
+    Type: String
+    Default: staging
+    AllowedValues:
+      - staging
+      - production
+    Description: Deployment stage controlling resource naming and isolation.
+
+  BedrockModelId:
+    Type: String
+    Default: eu.anthropic.claude-haiku-4-5-20251001-v1:0
+    Description: Amazon Bedrock inference profile identifier for LLM inference.
+
+  BedrockRegion:
+    Type: String
+    Default: eu-north-1
+    Description: AWS region where Bedrock model access is provisioned (can differ from stack region).
+
+  SystemPrompt:
+    Type: String
+    Default: ""
+    Description: Override the default system prompt for the chatbot.
+
+  PollyVoiceId:
+    Type: String
+    Default: Danielle
+    Description: Polly neural voice ID for the en_US locale speech synthesis.
+
+  ReservedConcurrency:
+    Type: Number
+    Default: -1
+    Description: >
+      Reserved concurrent executions for the Lambda. Set to -1 to disable
+      reserved concurrency (useful when the account concurrency limit is too
+      low to reserve any). When >= 0, the value is applied directly.
+
+Conditions:
+  IsProduction: !Equals [!Ref Stage, production]
+  UseReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, -1]]
+
+Resources:
+  ChatbotLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub
+        - "${Prefix}-bedrock-chatbot-role"
+        - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: BedrockInvokePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: bedrock:InvokeModel
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub
+                  - "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${Prefix}-bedrock-chatbot-fn:*"
+                  - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt DeadLetterQueue.Arn
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                Resource: "*"
+              - Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    "cloudwatch:namespace": ProductionChatbot
+
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub
+        - "${Prefix}-bedrock-chatbot-dlq"
+        - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+      MessageRetentionPeriod: 1209600
+
+  ChatbotLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub
+        - "${Prefix}-bedrock-chatbot-fn"
+        - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+      Handler: src/handler.lambda_handler
+      Runtime: python3.12
+      MemorySize: 256
+      Timeout: 60
+      CodeUri: .
+      Role: !GetAtt ChatbotLambdaRole.Arn
+      Tracing: Active
+      ReservedConcurrentExecutions: !If
+        - UseReservedConcurrency
+        - !Ref ReservedConcurrency
+        - !Ref "AWS::NoValue"
+      AutoPublishAlias: live
+      ProvisionedConcurrencyConfig: !If
+        - IsProduction
+        - ProvisionedConcurrentExecutions: 2
+        - !Ref "AWS::NoValue"
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt DeadLetterQueue.Arn
+      Environment:
+        Variables:
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          BEDROCK_REGION: !Ref BedrockRegion
+          SYSTEM_PROMPT: !Ref SystemPrompt
+
+  LexBot:
+    Type: AWS::Lex::Bot
+    Properties:
+      Name: !Sub
+        - "${Prefix}-bedrock-chatbot-bot"
+        - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+      DataPrivacy:
+        ChildDirected: false
+      IdleSessionTTLInSeconds: 300
+      RoleArn: !GetAtt LexBotRole.Arn
+      BotLocales:
+        - LocaleId: en_US
+          NluConfidenceThreshold: 0.40
+          VoiceSettings:
+            VoiceId: !Ref PollyVoiceId
+            Engine: neural
+          Intents:
+            - Name: FallbackIntent
+              ParentIntentSignature: AMAZON.FallbackIntent
+              InitialResponseSetting:
+                CodeHook:
+                  IsActive: true
+                  EnableCodeHookInvocation: true
+                  PostCodeHookSpecification: {}
+              FulfillmentCodeHook:
+                Enabled: true
+            - Name: WelcomeIntent
+              Description: Greets the user - required to satisfy Lex locale build requirement
+              SampleUtterances:
+                - Utterance: Hi
+                - Utterance: Hello
+                - Utterance: Hey
+                - Utterance: Good morning
+                - Utterance: Help
+              IntentClosingSetting:
+                ClosingResponse:
+                  MessageGroupsList:
+                    - Message:
+                        PlainTextMessage:
+                          Value: "Hello! I'm a corporate research assistant. Ask me anything about a company."
+
+  LexBotRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub
+        - "${Prefix}-bedrock-chatbot-lex-role"
+        - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lexv2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LexRuntimePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - polly:SynthesizeSpeech
+                Resource: "*"
+
+  LexBotVersion:
+    Type: AWS::Lex::BotVersion
+    Properties:
+      BotId: !GetAtt LexBot.Id
+      BotVersionLocaleSpecification:
+        - LocaleId: en_US
+          BotVersionLocaleDetails:
+            SourceBotVersion: DRAFT
+
+  LexBotAlias:
+    Type: AWS::Lex::BotAlias
+    Properties:
+      BotId: !GetAtt LexBot.Id
+      BotAliasName: !Sub
+        - "${Prefix}-chatbot-alias"
+        - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+      BotVersion: !GetAtt LexBotVersion.BotVersion
+      BotAliasLocaleSettings:
+        - LocaleId: en_US
+          BotAliasLocaleSetting:
+            Enabled: true
+            # NOTE: Lex code hook timeout must be set to 60s to match Lambda timeout.
+            # CloudFormation does not expose a timeout property on LambdaCodeHook.
+            # After deployment, configure via AWS CLI:
+            #   aws lexv2-models update-bot-alias \
+            #     --bot-id <BOT_ID> --bot-alias-id <ALIAS_ID> \
+            #     --bot-alias-locale-settings '{"en_US":{"enabled":true,"codeHookSpecification":{"lambdaCodeHook":{"lambdaARN":"<LAMBDA_ARN>","codeHookInterfaceVersion":"1.0"}}}}'
+            # The default Lex code hook timeout is 30s which is insufficient for
+            # Bedrock cross-region inference. Set to 60s to prevent premature timeouts.
+            CodeHookSpecification:
+              LambdaCodeHook:
+                CodeHookInterfaceVersion: "1.0"
+                LambdaArn: !GetAtt ChatbotLambda.Arn
+
+  LexInvokeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt ChatbotLambda.Arn
+      Principal: lex.amazonaws.com
+      SourceArn: !GetAtt LexBotAlias.Arn
+
+  # ----- Cognito User Pool for Authentication -----
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub
+        - "${Prefix}-bedrock-chatbot-user-pool"
+        - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      AutoVerifiedAttributes:
+        - email
+      UsernameAttributes:
+        - email
+
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub
+        - "${Prefix}-bedrock-chatbot-client"
+        - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+      UserPoolId: !Ref CognitoUserPool
+      GenerateSecret: false
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+      AllowedOAuthFlowsUserPoolClient: true
+      SupportedIdentityProviders:
+        - COGNITO
+      CallbackURLs:
+        - !Sub "https://${WebUICloudFront.DomainName}"
+      LogoutURLs:
+        - !Sub "https://${WebUICloudFront.DomainName}"
+
+  CognitoUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub
+        - "${Prefix}-bedrock-chatbot-${AWS::AccountId}"
+        - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+      UserPoolId: !Ref CognitoUserPool
+
+  # ----- Cognito Identity Pool for Lex Web UI -----
+  CognitoIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Sub
+        - "${Prefix}-bedrock-chatbot-identity-pool"
+        - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+      AllowUnauthenticatedIdentities: true
+      CognitoIdentityProviders:
+        - ClientId: !Ref CognitoUserPoolClient
+          ProviderName: !GetAtt CognitoUserPool.ProviderName
+
+  CognitoAuthRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub
+        - "${Prefix}-bedrock-chatbot-cognito-auth"
+        - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "cognito-identity.amazonaws.com:aud": !Ref CognitoIdentityPool
+              "ForAnyValue:StringLike":
+                "cognito-identity.amazonaws.com:amr": authenticated
+      Policies:
+        - PolicyName: LexRuntimeAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lex:RecognizeText
+                  - lex:RecognizeUtterance
+                  - lex:DeleteSession
+                  - lex:PutSession
+                Resource: !Sub
+                  - "arn:aws:lex:${AWS::Region}:${AWS::AccountId}:bot-alias/${BotId}/${AliasId}"
+                  - BotId: !GetAtt LexBot.Id
+                    AliasId: !GetAtt LexBotAlias.BotAliasId
+
+  CognitoUnauthRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub
+        - "${Prefix}-bedrock-chatbot-cognito-unauth"
+        - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "cognito-identity.amazonaws.com:aud": !Ref CognitoIdentityPool
+              "ForAnyValue:StringLike":
+                "cognito-identity.amazonaws.com:amr": unauthenticated
+      Policies:
+        - PolicyName: LexRuntimeAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lex:RecognizeText
+                  - lex:RecognizeUtterance
+                  - lex:DeleteSession
+                  - lex:PutSession
+                Resource: !Sub
+                  - "arn:aws:lex:${AWS::Region}:${AWS::AccountId}:bot-alias/${BotId}/${AliasId}"
+                  - BotId: !GetAtt LexBot.Id
+                    AliasId: !GetAtt LexBotAlias.BotAliasId
+
+  CognitoIdentityPoolRoleAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref CognitoIdentityPool
+      Roles:
+        authenticated: !GetAtt CognitoAuthRole.Arn
+        unauthenticated: !GetAtt CognitoUnauthRole.Arn
+
+  # ----- S3 Bucket for Web UI hosting -----
+  WebUIBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub
+        - "${Prefix}-bedrock-chatbot-webui-${AWS::AccountId}"
+        - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+
+  WebUIBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebUIBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${WebUIBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${WebUICloudFront}"
+
+  # ----- CloudFront Origin Access Control -----
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub
+          - "${Prefix}-bedrock-chatbot-oac"
+          - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # ----- CloudFront Cache Policy -----
+  CloudFrontCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub
+          - "${Prefix}-bedrock-chatbot-cache-policy"
+          - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+        MinTTL: 0
+        DefaultTTL: 60
+        MaxTTL: 300
+        ParametersInCacheKeyAndForwardedToOrigin:
+          CookiesConfig:
+            CookieBehavior: none
+          HeadersConfig:
+            HeaderBehavior: none
+          QueryStringsConfig:
+            QueryStringBehavior: none
+          EnableAcceptEncodingGzip: true
+          EnableAcceptEncodingBrotli: true
+
+  # ----- CloudFront Distribution for HTTPS access -----
+  WebUICloudFront:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub
+          - "${Prefix}-bedrock-chatbot Web UI"
+          - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+        DefaultRootObject: index.html
+        Origins:
+          - Id: S3WebUI
+            DomainName: !GetAtt WebUIBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+            OriginAccessControlId: !GetAtt CloudFrontOAC.Id
+        DefaultCacheBehavior:
+          TargetOriginId: S3WebUI
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+          CachePolicyId: !Ref CloudFrontCachePolicy
+          Compress: true
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+  # ----- Monitoring: SNS + CloudWatch Alarms -----
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub
+        - "${Prefix}-bedrock-chatbot-alarms"
+        - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+
+  LambdaErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub
+        - "${Prefix}-bedrock-chatbot-error-rate"
+        - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+      AlarmDescription: Lambda error rate exceeds 5%
+      Metrics:
+        - Id: errors
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Errors
+              Dimensions:
+                - Name: FunctionName
+                  Value: !Ref ChatbotLambda
+            Period: 300
+            Stat: Sum
+          ReturnData: false
+        - Id: invocations
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Invocations
+              Dimensions:
+                - Name: FunctionName
+                  Value: !Ref ChatbotLambda
+            Period: 300
+            Stat: Sum
+          ReturnData: false
+        - Id: errorRate
+          Expression: "errors / invocations"
+          Label: Error Rate
+          ReturnData: true
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0.05
+      EvaluationPeriods: 1
+      AlarmActions:
+        - !Ref AlarmTopic
+      TreatMissingData: notBreaching
+
+  LambdaDurationP99Alarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub
+        - "${Prefix}-bedrock-chatbot-duration-p99"
+        - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+      AlarmDescription: Lambda p99 duration exceeds 45 seconds
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ChatbotLambda
+      ExtendedStatistic: p99
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 45000
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlarmTopic
+      TreatMissingData: notBreaching
+
+  LexMissedUtteranceAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub
+        - "${Prefix}-bedrock-chatbot-missed-utterances"
+        - Prefix: !FindInMap [StagePrefix, !Ref Stage, Prefix]
+      AlarmDescription: Lex missed utterance count exceeds 20 in 5 minutes
+      Namespace: AWS/Lex
+      MetricName: MissedUtteranceCount
+      Dimensions:
+        - Name: BotId
+          Value: !GetAtt LexBot.Id
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 20
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlarmTopic
+      TreatMissingData: notBreaching
+
+Outputs:
+  LexBotId:
+    Description: Lex Bot ID
+    Value: !GetAtt LexBot.Id
+
+  LexBotAliasId:
+    Description: Lex Bot Alias ID
+    Value: !GetAtt LexBotAlias.BotAliasId
+
+  CognitoIdentityPoolId:
+    Description: Cognito Identity Pool ID for Web UI authentication
+    Value: !Ref CognitoIdentityPool
+
+  CognitoUserPoolId:
+    Description: Cognito User Pool ID for Web UI authentication
+    Value: !Ref CognitoUserPool
+
+  CognitoUserPoolClientId:
+    Description: Cognito User Pool Client ID for Web UI authentication
+    Value: !Ref CognitoUserPoolClient
+
+  WebUIBucketName:
+    Description: S3 bucket for hosting the Lex Web UI
+    Value: !Ref WebUIBucket
+
+  WebUIHttpsUrl:
+    Description: HTTPS URL of the Lex Web UI (via CloudFront)
+    Value: !Sub "https://${WebUICloudFront.DomainName}"
+
+  AlarmTopicArn:
+    Description: SNS topic ARN for CloudWatch alarm notifications
+    Value: !Ref AlarmTopic
+
+  DeadLetterQueueUrl:
+    Description: Dead Letter Queue URL for failed Lambda invocations
+    Value: !Ref DeadLetterQueue

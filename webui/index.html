@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bedrock Chatbot</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .chat-container {
+            width: 100%;
+            max-width: 700px;
+            height: 80vh;
+            background: #ffffff;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chat-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .chat-header .avatar {
+            width: 40px;
+            height: 40px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        .chat-header h1 {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .chat-header p {
+            font-size: 12px;
+            opacity: 0.8;
+        }
+
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .message {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 16px;
+            line-height: 1.5;
+            font-size: 14px;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.user {
+            align-self: flex-end;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.bot {
+            align-self: flex-start;
+            background: #f0f2f5;
+            color: #1a1a2e;
+            border-bottom-left-radius: 4px;
+        }
+
+        .message.error {
+            align-self: center;
+            background: #fee;
+            color: #c00;
+            font-size: 12px;
+            text-align: center;
+        }
+
+        .typing-indicator {
+            align-self: flex-start;
+            padding: 12px 16px;
+            background: #f0f2f5;
+            border-radius: 16px;
+            display: none;
+        }
+
+        .typing-indicator span {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #999;
+            margin: 0 2px;
+            animation: bounce 1.4s infinite;
+        }
+
+        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes bounce {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-6px); }
+        }
+
+        .input-area {
+            padding: 16px 20px;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            gap: 12px;
+            background: #fafafa;
+        }
+
+        .input-area input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 24px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .input-area input:focus {
+            border-color: #667eea;
+        }
+
+        .input-area button {
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 24px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.1s, opacity 0.2s;
+        }
+
+        .input-area button:hover {
+            transform: scale(1.02);
+        }
+
+        .input-area button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .mic-btn {
+            padding: 12px 16px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 24px;
+            font-size: 18px;
+            cursor: pointer;
+            transition: transform 0.1s, opacity 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 48px;
+        }
+
+        .mic-btn:hover {
+            transform: scale(1.02);
+        }
+
+        .mic-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .mic-btn.recording {
+            background: linear-gradient(135deg, #e53935 0%, #c62828 100%);
+            animation: pulse-recording 1s infinite;
+        }
+
+        @keyframes pulse-recording {
+            0% { box-shadow: 0 0 0 0 rgba(229, 57, 53, 0.6); }
+            50% { box-shadow: 0 0 0 10px rgba(229, 57, 53, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(229, 57, 53, 0); }
+        }
+
+        .mic-btn.playing {
+            background: linear-gradient(135deg, #43a047 0%, #2e7d32 100%);
+            animation: pulse-playing 1.2s infinite;
+        }
+
+        @keyframes pulse-playing {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        .status-bar {
+            text-align: center;
+            padding: 8px;
+            font-size: 11px;
+            color: #666;
+            background: #f5f5f5;
+        }
+
+        .status-bar.connected { color: #2e7d32; }
+        .status-bar.error { color: #c00; }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <div class="avatar">🤖</div>
+            <div>
+                <h1>Corporate Research Assistant</h1>
+                <p>Powered by Amazon Bedrock</p>
+            </div>
+        </div>
+
+        <div class="messages" id="messages">
+            <div class="message bot">
+                Hello! I'm a corporate research assistant. Ask me about any company and I'll provide fact-based information. How can I help you?
+            </div>
+        </div>
+
+        <div class="typing-indicator" id="typing">
+            <span></span><span></span><span></span>
+        </div>
+
+        <div class="input-area">
+            <input type="text" id="userInput" placeholder="Type your message..." autocomplete="off">
+            <button id="micBtn" class="mic-btn" title="Hold to record voice">🎤</button>
+            <button id="sendBtn" onclick="sendMessage()">Send</button>
+        </div>
+
+        <div class="status-bar" id="statusBar">Initializing...</div>
+    </div>
+
+    <!-- AWS SDK -->
+    <script src="https://sdk.amazonaws.com/js/aws-sdk-2.1692.0.min.js"></script>
+
+    <script>
+        // ===== CONFIGURATION =====
+        // These values come from your CloudFormation stack outputs.
+        // Replace them after deploying the main stack.
+        const CONFIG = {
+            region: '{{REGION}}',
+            cognitoIdentityPoolId: '{{COGNITO_IDENTITY_POOL_ID}}',
+            lexBotId: '{{LEX_BOT_ID}}',
+            lexBotAliasId: '{{LEX_BOT_ALIAS_ID}}',
+            localeId: 'en_US'
+        };
+
+        let lexClient;
+        let sessionId = 'session-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+
+        // ===== UI STATE MANAGEMENT =====
+        // Centralized function managing UI states: "idle", "recording", "processing", "playing", "error"
+        let currentUIState = 'idle';
+
+        function setUIState(state) {
+            currentUIState = state;
+            const input = document.getElementById('userInput');
+            const sendBtn = document.getElementById('sendBtn');
+            const micBtn = document.getElementById('micBtn');
+
+            // Clear all state classes from mic button
+            micBtn.classList.remove('recording', 'playing');
+
+            switch (state) {
+                case 'idle':
+                    input.disabled = false;
+                    sendBtn.disabled = false;
+                    micBtn.textContent = '🎤';
+                    micBtn.title = 'Click to record voice';
+                    // Only re-enable mic if voice is supported
+                    if (AudioRecorder.isSupported()) {
+                        micBtn.disabled = false;
+                    }
+                    showTyping(false);
+                    input.focus();
+                    break;
+
+                case 'recording':
+                    input.disabled = true;
+                    sendBtn.disabled = true;
+                    // Mic stays enabled so user can click to stop
+                    micBtn.textContent = '⏹';
+                    micBtn.title = 'Click to stop recording';
+                    micBtn.disabled = false;
+                    micBtn.classList.add('recording');
+                    showTyping(false);
+                    break;
+
+                case 'processing':
+                    input.disabled = true;
+                    sendBtn.disabled = true;
+                    micBtn.disabled = true;
+                    micBtn.textContent = '🎤';
+                    showTyping(true);
+                    break;
+
+                case 'playing':
+                    input.disabled = true;
+                    sendBtn.disabled = true;
+                    micBtn.disabled = true;
+                    micBtn.textContent = '🔊';
+                    micBtn.classList.add('playing');
+                    showTyping(false);
+                    break;
+
+                case 'error':
+                    input.disabled = false;
+                    sendBtn.disabled = false;
+                    micBtn.textContent = '🎤';
+                    micBtn.title = 'Click to record voice';
+                    if (AudioRecorder.isSupported()) {
+                        micBtn.disabled = false;
+                    }
+                    showTyping(false);
+                    input.focus();
+                    break;
+
+                default:
+                    console.warn('Unknown UI state:', state);
+                    break;
+            }
+        }
+
+        // ===== AUDIO RECORDER MODULE =====
+        // Captures PCM 16kHz mono audio from the microphone
+        const AudioRecorder = {
+            isRecording: false,
+            audioContext: null,
+            mediaStream: null,
+            scriptProcessor: null,
+            pcmBuffers: [],
+            maxDurationMs: 15000,
+            timeoutId: null,
+
+            // Check if browser supports required audio APIs
+            isSupported() {
+                const hasGetUserMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+                const hasAudioContext = !!(window.AudioContext || window.webkitAudioContext);
+                return hasGetUserMedia && hasAudioContext;
+            },
+
+            // Start recording: request mic, create AudioContext, begin PCM capture
+            async start() {
+                try {
+                    this.pcmBuffers = [];
+
+                    this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                    this.audioContext = new AudioCtx({ sampleRate: 16000 });
+
+                    const source = this.audioContext.createMediaStreamSource(this.mediaStream);
+                    this.scriptProcessor = this.audioContext.createScriptProcessor(4096, 1, 1);
+
+                    this.scriptProcessor.onaudioprocess = (event) => {
+                        if (this.isRecording) {
+                            const inputData = event.inputBuffer.getChannelData(0);
+                            this.pcmBuffers.push(new Float32Array(inputData));
+                        }
+                    };
+
+                    source.connect(this.scriptProcessor);
+                    this.scriptProcessor.connect(this.audioContext.destination);
+
+                    this.isRecording = true;
+
+                    // Auto-stop after maxDurationMs
+                    this.timeoutId = setTimeout(() => {
+                        if (this.isRecording) {
+                            // Trigger the mic button click to stop via the UI flow
+                            document.getElementById('micBtn').click();
+                        }
+                    }, this.maxDurationMs);
+                } catch (error) {
+                    const micBtn = document.getElementById('micBtn');
+                    if (error.name === 'NotAllowedError') {
+                        addMessage('Microphone access denied', 'error');
+                        micBtn.disabled = true;
+                    } else if (error.name === 'NotFoundError') {
+                        addMessage('No microphone found', 'error');
+                        micBtn.disabled = true;
+                    } else {
+                        addMessage('Microphone error: ' + error.message, 'error');
+                        micBtn.disabled = true;
+                    }
+                    this.isRecording = false;
+                    throw error;
+                }
+            },
+
+            // Stop recording: close stream, assemble PCM Int16 ArrayBuffer
+            stop() {
+                // Clear auto-stop timeout
+                if (this.timeoutId) {
+                    clearTimeout(this.timeoutId);
+                    this.timeoutId = null;
+                }
+
+                this.isRecording = false;
+
+                // Stop all media tracks
+                if (this.mediaStream) {
+                    this.mediaStream.getTracks().forEach(track => track.stop());
+                    this.mediaStream = null;
+                }
+
+                // Disconnect and close audio nodes
+                if (this.scriptProcessor) {
+                    this.scriptProcessor.disconnect();
+                    this.scriptProcessor = null;
+                }
+
+                if (this.audioContext) {
+                    this.audioContext.close();
+                    this.audioContext = null;
+                }
+
+                // Concatenate Float32 buffers
+                const totalLength = this.pcmBuffers.reduce((sum, buf) => sum + buf.length, 0);
+                const concatenated = new Float32Array(totalLength);
+                let offset = 0;
+                for (const buf of this.pcmBuffers) {
+                    concatenated.set(buf, offset);
+                    offset += buf.length;
+                }
+                this.pcmBuffers = [];
+
+                // Convert Float32 to Int16 PCM
+                const int16 = new Int16Array(concatenated.length);
+                for (let i = 0; i < concatenated.length; i++) {
+                    const sample = concatenated[i] * 0x7FFF;
+                    // Clamp to [-32768, 32767]
+                    int16[i] = sample < -32768 ? -32768 : sample > 32767 ? 32767 : sample;
+                }
+
+                return int16.buffer;
+            }
+        };
+
+        // ===== VOICE CONTROLLER MODULE =====
+        // Manages voice interaction lifecycle: recording, API calls, playback
+        const VoiceController = {
+            // Send recorded PCM audio to Lex via RecognizeUtterance API
+            async sendAudio(pcmBuffer) {
+                setUIState('processing');
+
+                try {
+                    const params = {
+                        botId: CONFIG.lexBotId,
+                        botAliasId: CONFIG.lexBotAliasId,
+                        localeId: CONFIG.localeId,
+                        sessionId: sessionId,
+                        requestContentType: 'audio/l16; rate=16000; channels=1',
+                        responseContentType: 'audio/mpeg',
+                        inputStream: new Uint8Array(pcmBuffer)
+                    };
+
+                    // 30-second timeout for the RecognizeUtterance API call
+                    const timeoutMs = 30000;
+                    const timeoutPromise = new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('Request timed out')), timeoutMs)
+                    );
+                    const response = await Promise.race([
+                        lexClient.recognizeUtterance(params).promise(),
+                        timeoutPromise
+                    ]);
+
+                    // Decode and display the input transcript (what Lex heard)
+                    if (response.inputTranscript) {
+                        try {
+                            const transcript = await this.decompressGzipBase64(response.inputTranscript);
+                            if (transcript) {
+                                addMessage(transcript.replace(/^"|"$/g, ''), 'user');
+                            }
+                        } catch (e) {
+                            console.warn('inputTranscript decode failed, trying plain base64:', e);
+                            try {
+                                const transcript = decodeURIComponent(atob(response.inputTranscript));
+                                if (transcript) addMessage(transcript, 'user');
+                            } catch (e2) { /* skip */ }
+                        }
+                    }
+
+                    // Decode and display response messages
+                    let messages = [];
+                    if (response.messages) {
+                        try {
+                            const decompressed = await this.decompressGzipBase64(response.messages);
+                            messages = JSON.parse(decompressed);
+                        } catch (e) {
+                            console.warn('messages gzip decode failed, trying plain:', e);
+                            messages = this.decodeResponseMessages(response);
+                        }
+                    }
+                    const textTranscript = (messages && messages.length > 0)
+                        ? messages.map(msg => msg.content).join(' ')
+                        : '';
+                    if (messages && messages.length > 0) {
+                        messages.forEach(msg => {
+                            addMessage(msg.content, 'bot');
+                        });
+                    }
+
+                    // Play audio response if available
+                    if (response.audioStream) {
+                        await this.playAudioResponse(response.audioStream, textTranscript);
+                    } else {
+                        // No audio stream — text already displayed above via decodeResponseMessages
+                        setUIState('idle');
+                    }
+                } catch (error) {
+                    console.error('RecognizeUtterance error:', error);
+
+                    let errorMessage;
+                    if (error.message === 'Request timed out') {
+                        errorMessage = 'Voice request timed out. Please try again.';
+                    } else if (error.code === 'NetworkingError' || error.code === 'TimeoutError') {
+                        errorMessage = 'Network error. Please check your connection and try again.';
+                    } else if (error.statusCode && error.statusCode >= 500) {
+                        errorMessage = 'Voice service temporarily unavailable. Please try again later.';
+                    } else {
+                        errorMessage = 'Voice request failed. Please try again.';
+                    }
+                    addMessage(errorMessage, 'error');
+                    setUIState('error');
+                }
+            },
+
+            // Play MPEG audio response from Lex via HTMLAudioElement
+            // audioStream: Blob, Uint8Array, or ArrayBuffer from RecognizeUtterance response
+            // textTranscript: fallback text to display if audio playback fails
+            playAudioResponse(audioStream, textTranscript) {
+                // Convert audioStream to Blob if it isn't already one
+                let blob;
+                if (audioStream instanceof Blob) {
+                    blob = audioStream;
+                } else if (audioStream instanceof Uint8Array || audioStream instanceof ArrayBuffer) {
+                    blob = new Blob([audioStream], { type: 'audio/mpeg' });
+                } else {
+                    // Unrecognized type — fall back to text display
+                    if (textTranscript) {
+                        addMessage(textTranscript, 'bot');
+                    }
+                    setUIState('idle');
+                    return Promise.resolve();
+                }
+
+                // Create Object URL for the audio blob
+                const url = URL.createObjectURL(blob);
+                const audio = new Audio(url);
+
+                // Show playing state
+                setUIState('playing');
+
+                // On playback end: clean up and return to idle
+                audio.onended = () => {
+                    URL.revokeObjectURL(url);
+                    setUIState('idle');
+                };
+
+                // On playback error: clean up, show text fallback, return to idle
+                audio.onerror = () => {
+                    URL.revokeObjectURL(url);
+                    if (textTranscript) {
+                        addMessage(textTranscript, 'bot');
+                    } else {
+                        addMessage('Audio playback failed', 'error');
+                    }
+                    setUIState('error');
+                };
+
+                // Attempt playback — handle autoplay policy rejection
+                const playPromise = audio.play();
+                if (playPromise !== undefined) {
+                    playPromise.catch(() => {
+                        // Autoplay blocked by browser policy — fall back to text
+                        URL.revokeObjectURL(url);
+                        if (textTranscript) {
+                            addMessage(textTranscript, 'bot');
+                        } else {
+                            addMessage('Audio playback blocked by browser. Response displayed as text.', 'error');
+                        }
+                        setUIState('idle');
+                    });
+                }
+
+                return Promise.resolve();
+            },
+
+            // Decode base64-encoded messages from RecognizeUtterance response
+            // Decompress gzip-encoded base64 string from RecognizeUtterance response
+            async decompressGzipBase64(encoded) {
+                const binaryStr = atob(encoded);
+                const bytes = new Uint8Array(binaryStr.length);
+                for (let i = 0; i < binaryStr.length; i++) {
+                    bytes[i] = binaryStr.charCodeAt(i);
+                }
+                const ds = new DecompressionStream('gzip');
+                const writer = ds.writable.getWriter();
+                writer.write(bytes);
+                writer.close();
+                const reader = ds.readable.getReader();
+                const chunks = [];
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    chunks.push(value);
+                }
+                const totalLength = chunks.reduce((sum, c) => sum + c.length, 0);
+                const result = new Uint8Array(totalLength);
+                let offset = 0;
+                for (const chunk of chunks) {
+                    result.set(chunk, offset);
+                    offset += chunk.length;
+                }
+                return new TextDecoder().decode(result);
+            },
+
+            decodeResponseMessages(response) {
+                // This is now just a sync wrapper — actual decoding happens in sendAudio
+                if (!response.messages) {
+                    return [];
+                }
+                try {
+                    // Try as plain base64+URL-encoded first (fallback for non-gzipped)
+                    const decoded = JSON.parse(decodeURIComponent(atob(response.messages)));
+                    return decoded;
+                } catch (error) {
+                    console.error('Failed to decode response messages (sync):', error);
+                    return [];
+                }
+            },
+
+            // Toggle recording state (called by mic button click)
+            async toggleRecording() {
+                if (!AudioRecorder.isRecording) {
+                    // Start recording
+                    try {
+                        await AudioRecorder.start();
+                        setUIState('recording');
+                    } catch (error) {
+                        // Error already handled in AudioRecorder.start()
+                        setUIState('error');
+                    }
+                } else {
+                    // Stop recording and send audio
+                    const pcmBuffer = AudioRecorder.stop();
+                    if (pcmBuffer.byteLength === 0) {
+                        addMessage('No audio captured. Please try speaking louder or check your microphone.', 'error');
+                        setUIState('idle');
+                        return;
+                    }
+                    await this.sendAudio(pcmBuffer);
+                }
+            }
+        };
+
+        // Initialize AWS SDK and Lex client
+        async function initialize() {
+            const statusBar = document.getElementById('statusBar');
+
+            try {
+                // Configure Cognito credentials
+                AWS.config.region = CONFIG.region;
+                AWS.config.credentials = new AWS.CognitoIdentityCredentials({
+                    IdentityPoolId: CONFIG.cognitoIdentityPoolId
+                });
+
+                // Wait for credentials
+                await AWS.config.credentials.getPromise();
+
+                // Create Lex V2 Runtime client
+                lexClient = new AWS.LexRuntimeV2({ region: CONFIG.region });
+
+                statusBar.textContent = 'Connected';
+                statusBar.className = 'status-bar connected';
+
+                document.getElementById('userInput').focus();
+            } catch (error) {
+                console.error('Initialization error:', error);
+                statusBar.textContent = 'Connection failed — check configuration';
+                statusBar.className = 'status-bar error';
+            }
+        }
+
+        // Send message to Lex
+        async function sendMessage() {
+            const input = document.getElementById('userInput');
+            const text = input.value.trim();
+
+            if (!text || !lexClient) return;
+
+            // Show user message
+            addMessage(text, 'user');
+            input.value = '';
+            setUIState('processing');
+
+            try {
+                const params = {
+                    botId: CONFIG.lexBotId,
+                    botAliasId: CONFIG.lexBotAliasId,
+                    localeId: CONFIG.localeId,
+                    sessionId: sessionId,
+                    text: text
+                };
+
+                const response = await lexClient.recognizeText(params).promise();
+
+                // Extract response messages
+                if (response.messages && response.messages.length > 0) {
+                    response.messages.forEach(msg => {
+                        addMessage(msg.content, 'bot');
+                    });
+                } else {
+                    addMessage("I received your message but didn't get a response.", 'bot');
+                }
+            } catch (error) {
+                console.error('Lex error:', error);
+                addMessage('Sorry, something went wrong. Please try again.', 'error');
+            } finally {
+                setUIState('idle');
+            }
+        }
+
+        // Add message to chat
+        function addMessage(text, type) {
+            const messages = document.getElementById('messages');
+            const div = document.createElement('div');
+            div.className = `message ${type}`;
+            div.textContent = text;
+            messages.appendChild(div);
+            messages.scrollTop = messages.scrollHeight;
+        }
+
+        // Show/hide typing indicator
+        function showTyping(show) {
+            document.getElementById('typing').style.display = show ? 'block' : 'none';
+            if (show) {
+                const messages = document.getElementById('messages');
+                messages.scrollTop = messages.scrollHeight;
+            }
+        }
+
+        // Handle Enter key
+        document.getElementById('userInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+
+        // Check browser support on page load and disable mic if unsupported
+        function checkVoiceSupport() {
+            const micBtn = document.getElementById('micBtn');
+            if (!AudioRecorder.isSupported()) {
+                micBtn.disabled = true;
+                if (window.location.protocol === 'http:' && window.location.hostname !== 'localhost') {
+                    addMessage('Voice input requires HTTPS. Serve this page over HTTPS or access via localhost.', 'error');
+                } else {
+                    addMessage('Browser does not support voice input', 'error');
+                }
+            } else {
+                // Wire mic button click to VoiceController
+                micBtn.addEventListener('click', () => VoiceController.toggleRecording());
+            }
+        }
+
+        // Start
+        initialize();
+        checkVoiceSupport();
+    </script>
+</body>
+</html>

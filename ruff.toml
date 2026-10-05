@@ -1,0 +1,24 @@
+# Ruff configuration
+# Targets the Lambda runtime version. Lints for correctness issues
+# (undefined names, unused imports, import ordering, modernization)
+# while allowing the codebase's intentional defensive patterns
+# (broad try/except guards around metrics, logging, and X-Ray that
+# must never crash the request handler).
+target-version = "py312"
+line-length = 120
+
+[lint]
+select = [
+    "E4",   # import conventions
+    "E7",   # statement style
+    "E9",   # syntax/runtime errors
+    "F",    # pyflakes: undefined names, unused imports
+    "I",    # isort: import ordering
+    "UP",   # pyupgrade: modern syntax
+]
+ignore = [
+    "E402",  # tests intentionally import after module-level setup
+]
+
+[lint.per-file-ignores]
+"tests/**" = ["F811", "F401", "E402"]

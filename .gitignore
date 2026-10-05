@@ -1,0 +1,12 @@
+.DS_Store
+__pycache__/
+*.zip
+.env
+.aws-sam/
+*.pyc
+.hypothesis/
+.pytest_cache/
+webui/dist/
+.vscode/
+build.toml
+.aws-sam/
